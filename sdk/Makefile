@@ -14,7 +14,7 @@ all: $(EE_BIN)
 	$(EE_STRIP) --strip-all $(EE_BIN)
 
 clean:
-	rm -f $(EE_BIN) $(EE_OBJS)
+	rm -f $(EE_BIN) $(EE_OBJS) $(EE_LIB)
 
 run: $(EE_BIN)
 	ps2client execee host:$(EE_BIN)
