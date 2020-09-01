@@ -11,7 +11,6 @@ fn main() {
     let ent = em.create();
     tm.create(ent);
     rm.create(ent);
-    rm.init();
 
     rm.tick();
 }
