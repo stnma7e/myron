@@ -10,7 +10,5 @@ fn main() {
     let mut rm = RenderManager::new();
     let ent = em.create();
     tm.create(ent);
-    rm.create(ent);
-
-    rm.tick();
+    rm.create_vulkan_context();
 }
