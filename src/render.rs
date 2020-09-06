@@ -9,7 +9,7 @@ use vulkano::image::attachment::AttachmentImage;
 use vulkano::image::{ImageUsage, SwapchainImage};
 use vulkano::instance::Instance;
 use vulkano::instance::PhysicalDevice;
-use vulkano::pipeline::vertex::TwoBuffersDefinition;
+use vulkano::pipeline::vertex::{TwoBuffersDefinition, OneVertexOneInstanceDefinition};
 use vulkano::pipeline::viewport::Viewport;
 use vulkano::pipeline::{GraphicsPipeline, GraphicsPipelineAbstract};
 use vulkano::swapchain;
@@ -60,6 +60,13 @@ pub struct VulkanContext {
 
     distance: f32,
 }
+
+#[derive(Default, Debug, Clone)]
+struct InstanceData {
+    position_offset: [f32; 3],
+    scale: f32,
+}
+impl_vertex!(InstanceData, position_offset, scale);
 
 impl RenderManager {
     pub fn new() -> RenderManager {
@@ -129,6 +136,26 @@ impl RenderManager {
         let vertex_buffer =
             CpuAccessibleBuffer::from_iter(device.clone(), BufferUsage::all(), false, vertices)
                 .unwrap();
+
+        let instance_buffer = {
+            let data = vec![
+                InstanceData {
+                    position_offset: [0.0, 0.0, 0.0],
+                    scale: 1.0
+                },
+                InstanceData {
+                    position_offset: [-50.0, 0.0, -50.0],
+                    scale: 1.0
+                },
+            ];
+
+            CpuAccessibleBuffer::from_iter(
+                device.clone(),
+                BufferUsage::all(),
+                false,
+                data.iter().cloned(),
+            ).unwrap()
+        };
 
         let normals = NORMALS.iter().cloned();
         let normals_buffer =
@@ -253,8 +280,7 @@ impl RenderManager {
 
                     let uniform_buffer_subbuffer = {
                         let elapsed = rotation_start.elapsed();
-                        let rotation =
-                            elapsed.as_secs() as f64 + elapsed.subsec_nanos() as f64 / 1_000_000_000.0;
+                        let rotation = elapsed.as_secs() as f64 + elapsed.subsec_nanos() as f64 / 1_000_000_000.0;
                         let rotation = Matrix3::from_angle_y(Rad(rotation as f32));
 
                         // note: this teapot was meant for OpenGL where the origin is at the lower left
@@ -266,16 +292,18 @@ impl RenderManager {
                             0.01,
                             100.0,
                         );
+
                         let placement = Point3::new(0.0, ctx.distance, 0.0);
+                        let translate = Matrix4::from_translation(Vector3::new(placement.x, placement.y, placement.z));
                         let view = Matrix4::look_at(
                             Point3::new(0.3, 1.3, 1.0),
-                            placement,
+                            Point3::new(0.0, 0.0, 0.0),
                             Vector3::new(0.0, -1.0, 0.0),
                         );
-                        let scale = Matrix4::from_scale(0.01);
+                        let scale = Matrix4::from_scale(0.005);
 
                         let uniform_data = vs::ty::Data {
-                            world: Matrix4::from(rotation).into(),
+                            world: (Matrix4::from(rotation) * translate).into(),
                             view: (view * scale).into(),
                             proj: proj.into(),
                         };
@@ -311,6 +339,7 @@ impl RenderManager {
                         ctx.queue.family(),
                     )
                     .unwrap();
+
                     builder
                         .begin_render_pass(
                             ctx.framebuffers[image_num].clone(),
@@ -321,7 +350,11 @@ impl RenderManager {
                         .draw_indexed(
                             ctx.pipeline.clone(),
                             &DynamicState::none(),
-                            vec![ctx.vertex_buffer.clone(), ctx.normal_buffer.clone()],
+                            vec![
+                                ctx.vertex_buffer.clone(),
+                                //ctx.normal_buffer.clone(),
+                                instance_buffer.clone()
+                            ],
                             ctx.index_buffer.clone(),
                             set.clone(),
                             (),
@@ -379,9 +412,12 @@ mod vs {
 #version 450
 
 layout(location = 0) in vec3 position;
-layout(location = 1) in vec3 normal;
+//layout(location = 1) in vec3 normal;
+layout(location = 2) in vec3 position_offset;
+layout(location = 3) in float scale;
 
 layout(location = 0) out vec3 v_normal;
+
 
 layout(set = 0, binding = 0) uniform Data {
     mat4 world;
@@ -390,9 +426,11 @@ layout(set = 0, binding = 0) uniform Data {
 } uniforms;
 
 void main() {
+    vec3 normal = {1.0, 1.0, 1.0};
+
     mat4 worldview = uniforms.view * uniforms.world;
     v_normal = transpose(inverse(mat3(worldview))) * normal;
-    gl_Position = uniforms.proj * worldview * vec4(position, 1.0);
+    gl_Position = uniforms.proj * worldview * vec4(scale * position + position_offset, 1.0);
 }"
     }
 }
@@ -454,7 +492,7 @@ fn window_size_dependent_setup(
     // https://computergraphics.stackexchange.com/questions/5742/vulkan-best-way-of-updating-pipeline-viewport
     let pipeline = Arc::new(
         GraphicsPipeline::start()
-            .vertex_input(TwoBuffersDefinition::<Vertex, Normal>::new())
+            .vertex_input(OneVertexOneInstanceDefinition::<Vertex, InstanceData>::new())
             .vertex_shader(vs.main_entry_point(), ())
             .triangle_list()
             .viewports_dynamic_scissors_irrelevant(1)
