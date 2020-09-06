@@ -57,6 +57,8 @@ pub struct VulkanContext {
     render_pass: Arc<dyn RenderPassAbstract + Send + Sync>,
     pipeline: Arc<dyn GraphicsPipelineAbstract + Send + Sync>,
     framebuffers: Vec<Arc<dyn FramebufferAbstract + Send + Sync>>,
+
+    distance: f32,
 }
 
 impl RenderManager {
@@ -187,34 +189,47 @@ impl RenderManager {
             render_pass: render_pass,
             pipeline: pipeline,
             framebuffers: framebuffers,
+
+            distance: 0.0
         });
 
         let mut ctx = self.context.clone().unwrap();
         let mut recreate_swapchain = true;
         let rotation_start = Instant::now();
 
-        event_loop.run(move |event, _, control_flow| {
-            match event {
-                Event::WindowEvent {
-                    event: WindowEvent::CloseRequested,
-                    ..
-                } => {
+        event_loop.run(move |e, _, control_flow| {
+            match e {
+                Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
                     *control_flow = ControlFlow::Exit;
                 }
-                Event::WindowEvent {
-                    event: WindowEvent::Resized(_),
-                    ..
-                } => {
+                Event::WindowEvent { event: WindowEvent::Resized(_), .. } => {
                     recreate_swapchain = true;
                 }
                 Event::UserEvent(new_context) => {
-                    ctx = new_context
+                    ctx = new_context;
+                    recreate_swapchain = true;
+                }
+                Event::WindowEvent { event, .. } => {
+                    match event {
+                        WindowEvent::KeyboardInput { input, .. } => {
+                            match input.scancode {
+                                0x11 => {
+                                    ctx.distance += 0.05
+                                },
+                                0x1f => {
+                                    ctx.distance -= 0.05
+                                },
+                                _ => {}
+                            }
+                        },
+                        _ => {}
+                    }
                 }
                 Event::RedrawEventsCleared => {
                     previous_frame_end.as_mut().unwrap().cleanup_finished();
 
                     if recreate_swapchain {
-                        let dimensions: [u32; 2] = ctx.surface.window().inner_size().into();
+                        ctx.dimensions = ctx.surface.window().inner_size().into();
                         let (new_swapchain, new_images) =
                             match ctx.swapchain.recreate_with_dimensions(dimensions) {
                                 Ok(r) => r,
@@ -223,11 +238,12 @@ impl RenderManager {
                             };
 
                         ctx.swapchain = new_swapchain;
+                        ctx.images = new_images;
                         let (new_pipeline, new_framebuffers) = window_size_dependent_setup(
                             ctx.device.clone(),
                             &vs,
                             &fs,
-                            &new_images,
+                            &ctx.images,
                             ctx.render_pass.clone(),
                         );
                         ctx.pipeline = new_pipeline;
@@ -235,7 +251,7 @@ impl RenderManager {
                         recreate_swapchain = false;
                     }
 
-                    let unifoctx_buffer_subbuffer = {
+                    let uniform_buffer_subbuffer = {
                         let elapsed = rotation_start.elapsed();
                         let rotation =
                             elapsed.as_secs() as f64 + elapsed.subsec_nanos() as f64 / 1_000_000_000.0;
@@ -250,26 +266,27 @@ impl RenderManager {
                             0.01,
                             100.0,
                         );
+                        let placement = Point3::new(0.0, ctx.distance, 0.0);
                         let view = Matrix4::look_at(
                             Point3::new(0.3, 1.3, 1.0),
-                            Point3::new(0.0, 0.0, 0.0),
+                            placement,
                             Vector3::new(0.0, -1.0, 0.0),
                         );
                         let scale = Matrix4::from_scale(0.01);
 
-                        let unifoctx_data = vs::ty::Data {
+                        let uniform_data = vs::ty::Data {
                             world: Matrix4::from(rotation).into(),
                             view: (view * scale).into(),
                             proj: proj.into(),
                         };
 
-                        ctx.uniform_buffer.next(unifoctx_data).unwrap()
+                        ctx.uniform_buffer.next(uniform_data).unwrap()
                     };
 
                     let layout = ctx.pipeline.descriptor_set_layout(0).unwrap();
                     let set = Arc::new(
                         PersistentDescriptorSet::start(layout.clone())
-                            .add_buffer(unifoctx_buffer_subbuffer)
+                            .add_buffer(uniform_buffer_subbuffer)
                             .unwrap()
                             .build()
                             .unwrap(),

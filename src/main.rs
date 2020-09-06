@@ -1,3 +1,5 @@
+use std::thread;
+
 use myron::entity::{EntityManager, ComponentManager};
 use myron::transform::{TransformManager};
 use myron::render::{RenderManager};
@@ -10,5 +12,14 @@ fn main() {
     let mut rm = RenderManager::new();
     let ent = em.create();
     tm.create(ent);
+
+    let compute_thread = thread::spawn(move || {
+        loop {
+            tm.tick();
+        }
+    });
+
     rm.create_vulkan_context();
+
+    compute_thread.join().unwrap();
 }
