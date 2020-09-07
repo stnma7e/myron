@@ -1,7 +1,7 @@
-use vulkano::buffer::cpu_pool::CpuBufferPool;
+use vulkano::buffer::cpu_pool::{CpuBufferPool, CpuBufferPoolSubbuffer};
 use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, DynamicState};
-use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
+use vulkano::descriptor::descriptor_set::{PersistentDescriptorSet, PersistentDescriptorSetBuf};
 use vulkano::device::{Device, DeviceExtensions, Queue};
 use vulkano::format::Format;
 use vulkano::framebuffer::{Framebuffer, FramebufferAbstract, RenderPassAbstract, Subpass};
@@ -9,7 +9,7 @@ use vulkano::image::attachment::AttachmentImage;
 use vulkano::image::{ImageUsage, SwapchainImage};
 use vulkano::instance::Instance;
 use vulkano::instance::PhysicalDevice;
-use vulkano::pipeline::vertex::{TwoBuffersDefinition, OneVertexOneInstanceDefinition};
+use vulkano::pipeline::vertex::{TwoBuffersDefinition};
 use vulkano::pipeline::viewport::Viewport;
 use vulkano::pipeline::{GraphicsPipeline, GraphicsPipelineAbstract};
 use vulkano::swapchain;
@@ -19,6 +19,7 @@ use vulkano::swapchain::{
 };
 use vulkano::sync;
 use vulkano::sync::{FlushError, GpuFuture};
+use vulkano::memory::pool::StdMemoryPool;
 
 use vulkano_win::VkSurfaceBuild;
 use winit::event::{Event, WindowEvent};
@@ -31,7 +32,7 @@ use std::iter;
 use std::sync::{Arc};
 use std::time::Instant;
 
-use crate::teapot::{Normal, Vertex, INDICES, NORMALS, VERTICES};
+use crate::graphics::teapot::{Normal, Vertex, INDICES, NORMALS, VERTICES};
 use crate::entity::{Entity, ComponentManager};
 
 pub struct RenderManager {
@@ -49,24 +50,24 @@ pub struct VulkanContext {
     queue: Arc<Queue>,
     swapchain: Arc<Swapchain<Window>>,
     images: Vec<Arc<SwapchainImage<Window>>>,
+    models: Vec<Model>,
 
-    vertex_buffer: Arc<CpuAccessibleBuffer<[Vertex]>>,
-    normal_buffer: Arc<CpuAccessibleBuffer<[Normal]>>,
-    index_buffer: Arc<CpuAccessibleBuffer<[u16]>>,
-    uniform_buffer: CpuBufferPool<vs::ty::Data>,
+    uniform_buffer: CpuBufferPool<vs::ty::WorldData>,
     render_pass: Arc<dyn RenderPassAbstract + Send + Sync>,
     pipeline: Arc<dyn GraphicsPipelineAbstract + Send + Sync>,
     framebuffers: Vec<Arc<dyn FramebufferAbstract + Send + Sync>>,
 
-    distance: f32,
+    distance: Point3<f32>,
 }
 
-#[derive(Default, Debug, Clone)]
-struct InstanceData {
-    position_offset: [f32; 3],
-    scale: f32,
+#[derive(Clone)]
+pub struct Model {
+    vertex_buffer: Arc<CpuAccessibleBuffer<[Vertex]>>,
+    normal_buffer: Arc<CpuAccessibleBuffer<[Normal]>>,
+    index_buffer: Arc<CpuAccessibleBuffer<[u16]>>,
+    uniform_buffer: CpuBufferPool<vs::ty::ModelData>,
+    set: Arc<PersistentDescriptorSet<((), PersistentDescriptorSetBuf<CpuBufferPoolSubbuffer<vs::ty::ModelData, Arc<StdMemoryPool>>>)>>
 }
-impl_vertex!(InstanceData, position_offset, scale);
 
 impl RenderManager {
     pub fn new() -> RenderManager {
@@ -137,26 +138,6 @@ impl RenderManager {
             CpuAccessibleBuffer::from_iter(device.clone(), BufferUsage::all(), false, vertices)
                 .unwrap();
 
-        let instance_buffer = {
-            let data = vec![
-                InstanceData {
-                    position_offset: [0.0, 0.0, 0.0],
-                    scale: 1.0
-                },
-                InstanceData {
-                    position_offset: [-50.0, 0.0, -50.0],
-                    scale: 1.0
-                },
-            ];
-
-            CpuAccessibleBuffer::from_iter(
-                device.clone(),
-                BufferUsage::all(),
-                false,
-                data.iter().cloned(),
-            ).unwrap()
-        };
-
         let normals = NORMALS.iter().cloned();
         let normals_buffer =
             CpuAccessibleBuffer::from_iter(device.clone(), BufferUsage::all(), false, normals).unwrap();
@@ -165,7 +146,7 @@ impl RenderManager {
         let index_buffer =
             CpuAccessibleBuffer::from_iter(device.clone(), BufferUsage::all(), false, indices).unwrap();
 
-        let uniform_buffer = CpuBufferPool::<vs::ty::Data>::new(device.clone(), BufferUsage::all());
+        let uniform_buffer = CpuBufferPool::<vs::ty::WorldData>::new(device.clone(), BufferUsage::all());
 
         let render_pass = Arc::new(
             vulkano::single_pass_renderpass!(device.clone(),
@@ -199,6 +180,12 @@ impl RenderManager {
 
         let mut previous_frame_end = Some(sync::now(device.clone()).boxed());
 
+        let rotation_start = vec![Instant::now(), Instant::now() - std::time::Duration::from_millis(1000)];
+        let model_uniform_buffer = CpuBufferPool::<vs::ty::ModelData>::new(device.clone(), BufferUsage::all());
+        let model = Model::new(vertex_buffer.clone(), normals_buffer.clone(), index_buffer.clone(), model_uniform_buffer, rotation_start[0], pipeline.clone());
+        let model_uniform_buffer2 = CpuBufferPool::<vs::ty::ModelData>::new(device.clone(), BufferUsage::all());
+        let model2 = Model::new(vertex_buffer, normals_buffer, index_buffer, model_uniform_buffer2, rotation_start[1], pipeline.clone());
+
         self.context = Some(VulkanContext {
             event_loop_proxy: event_loop_proxy,
 
@@ -209,20 +196,17 @@ impl RenderManager {
             swapchain: swapchain,
             images: images,
 
-            vertex_buffer: vertex_buffer,
-            normal_buffer: normals_buffer,
-            index_buffer: index_buffer,
+            models: vec![model, model2],
             uniform_buffer: uniform_buffer,
             render_pass: render_pass,
             pipeline: pipeline,
             framebuffers: framebuffers,
 
-            distance: 0.0
+            distance: Point3::new(0.0, 0.0, 0.0)
         });
 
         let mut ctx = self.context.clone().unwrap();
         let mut recreate_swapchain = true;
-        let rotation_start = Instant::now();
 
         event_loop.run(move |e, _, control_flow| {
             match e {
@@ -240,12 +224,18 @@ impl RenderManager {
                     match event {
                         WindowEvent::KeyboardInput { input, .. } => {
                             match input.scancode {
-                                0x11 => {
-                                    ctx.distance += 0.05
+                                0x11 => { // W
+                                    ctx.distance[1] += 0.05
                                 },
-                                0x1f => {
-                                    ctx.distance -= 0.05
+                                0x1e => { // A
+                                    ctx.distance[0] -= 0.05
+                                }
+                                0x1f => { // S
+                                    ctx.distance[1] -= 0.05
                                 },
+                                0x20 => { // D
+                                    ctx.distance[0] += 0.05
+                                }
                                 _ => {}
                             }
                         },
@@ -278,13 +268,21 @@ impl RenderManager {
                         recreate_swapchain = false;
                     }
 
-                    let uniform_buffer_subbuffer = {
-                        let elapsed = rotation_start.elapsed();
-                        let rotation = elapsed.as_secs() as f64 + elapsed.subsec_nanos() as f64 / 1_000_000_000.0;
-                        let rotation = Matrix3::from_angle_y(Rad(rotation as f32));
+                    let (image_num, suboptimal, acquire_future) =
+                        match swapchain::acquire_next_image(ctx.swapchain.clone(), None) {
+                            Ok(r) => r,
+                            Err(AcquireError::OutOfDate) => {
+                                recreate_swapchain = true;
+                                return;
+                            }
+                            Err(e) => panic!("Failed to acquire next image: {:?}", e),
+                        };
 
-                        // note: this teapot was meant for OpenGL where the origin is at the lower left
-                        //       instead the origin is at the upper left in Vulkan, so we reverse the Y axis
+                    if suboptimal {
+                        recreate_swapchain = true;
+                    }
+
+                    let uniform_buffer_subbuffer = {
                         let aspect_ratio = ctx.dimensions[0] as f32 / ctx.dimensions[1] as f32;
                         let proj = cgmath::perspective(
                             Rad(std::f32::consts::FRAC_PI_2),
@@ -293,18 +291,14 @@ impl RenderManager {
                             100.0,
                         );
 
-                        let placement = Point3::new(0.0, ctx.distance, 0.0);
-                        let translate = Matrix4::from_translation(Vector3::new(placement.x, placement.y, placement.z));
                         let view = Matrix4::look_at(
                             Point3::new(0.3, 1.3, 1.0),
                             Point3::new(0.0, 0.0, 0.0),
                             Vector3::new(0.0, -1.0, 0.0),
                         );
-                        let scale = Matrix4::from_scale(0.005);
 
-                        let uniform_data = vs::ty::Data {
-                            world: (Matrix4::from(rotation) * translate).into(),
-                            view: (view * scale).into(),
+                        let uniform_data = vs::ty::WorldData {
+                            view: view.into(),
                             proj: proj.into(),
                         };
 
@@ -320,48 +314,41 @@ impl RenderManager {
                             .unwrap(),
                     );
 
-                    let (image_num, suboptimal, acquire_future) =
-                        match swapchain::acquire_next_image(ctx.swapchain.clone(), None) {
-                            Ok(r) => r,
-                            Err(AcquireError::OutOfDate) => {
-                                recreate_swapchain = true;
-                                return;
-                            }
-                            Err(e) => panic!("Failed to acquire next image: {:?}", e),
-                        };
-
-                    if suboptimal {
-                        recreate_swapchain = true;
-                    }
-
                     let mut builder = AutoCommandBufferBuilder::primary_one_time_submit(
                         ctx.device.clone(),
                         ctx.queue.family(),
-                    )
-                    .unwrap();
+                    ).unwrap();
 
-                    builder
-                        .begin_render_pass(
-                            ctx.framebuffers[image_num].clone(),
-                            false,
-                            vec![[0.0, 0.0, 1.0, 1.0].into(), 1f32.into()],
-                        )
-                        .unwrap()
-                        .draw_indexed(
-                            ctx.pipeline.clone(),
-                            &DynamicState::none(),
-                            vec![
-                                ctx.vertex_buffer.clone(),
-                                //ctx.normal_buffer.clone(),
-                                instance_buffer.clone()
-                            ],
-                            ctx.index_buffer.clone(),
-                            set.clone(),
-                            (),
-                        )
-                        .unwrap()
-                        .end_render_pass()
-                        .unwrap();
+                    for (i, model) in ctx.models.iter_mut().enumerate() {
+                        model.update(ctx.pipeline.clone(), rotation_start[i], i);
+                    }
+
+                    {
+                        let mut builder = builder
+                            .begin_render_pass(
+                                ctx.framebuffers[image_num].clone(),
+                                false,
+                                vec![[0.0, 0.0, 1.0, 1.0].into(), 1f32.into()],
+                            ).unwrap();
+                        for model in &ctx.models {
+                            builder = builder
+                                .draw_indexed(
+                                    ctx.pipeline.clone(),
+                                    &DynamicState::none(),
+                                    vec![
+                                        model.vertex_buffer.clone(),
+                                        model.normal_buffer.clone(),
+                                    ],
+                                    model.index_buffer.clone(),
+                                    (set.clone(), model.set.clone()),
+                                    (),
+                                ).unwrap();
+                        }
+                        builder
+                            .end_render_pass()
+                            .unwrap();
+                    }
+
                     let command_buffer = builder.build().unwrap();
 
                     let future = previous_frame_end
@@ -405,6 +392,60 @@ impl ComponentManager for RenderManager {
     }
 }
 
+impl Model {
+    pub fn new(
+        vertex_buffer: Arc<CpuAccessibleBuffer<[Vertex]>>,
+        normal_buffer: Arc<CpuAccessibleBuffer<[Normal]>>,
+        index_buffer: Arc<CpuAccessibleBuffer<[u16]>>,
+        uniform_buffer: CpuBufferPool<vs::ty::ModelData>,
+        rotation_start: Instant,
+        pipeline: Arc<dyn GraphicsPipelineAbstract + Send + Sync>,
+    ) -> Self {
+        let set = Model::create_descriptor_set(uniform_buffer.clone(), pipeline, rotation_start, Point3::new(0.0, 0.0, 0.0));
+        Model {
+            vertex_buffer:  vertex_buffer,
+            normal_buffer:  normal_buffer,
+            index_buffer:   index_buffer,
+            uniform_buffer: uniform_buffer,
+            set: set
+        }
+    }
+
+    pub fn update(&mut self, pipeline: Arc<dyn GraphicsPipelineAbstract + Send + Sync>, rotation_start: Instant, index: usize) {
+        let distance = Point3::new((index as f32) * 0.5, 0.0, 0.0);
+        self.set = Model::create_descriptor_set(self.uniform_buffer.clone(), pipeline, rotation_start, distance);
+    }
+
+    fn create_descriptor_set(uniform_buffer: CpuBufferPool<vs::ty::ModelData>,
+        pipeline: Arc<dyn GraphicsPipelineAbstract + Send + Sync>,
+        rotation_start: Instant,
+        distance: Point3<f32>,
+    ) -> Arc<PersistentDescriptorSet<((), PersistentDescriptorSetBuf<CpuBufferPoolSubbuffer<vs::ty::ModelData, Arc<StdMemoryPool>>>)>> {
+        let uniform_buffer_subbuffer = {
+            let elapsed = rotation_start.elapsed();
+            let rotation = elapsed.as_secs() as f64 + elapsed.subsec_nanos() as f64 / 1_000_000_000.0;
+            let rotation = Matrix3::from_angle_y(Rad(rotation as f32));
+            let scale = Matrix4::from_scale(0.005);
+
+            let translate = Matrix4::from_translation(Vector3::new(distance[0], distance[1], distance[2]));
+
+            let uniform_data = vs::ty::ModelData {
+                model: (translate * Matrix4::from(rotation) * scale).into(),
+            };
+
+            uniform_buffer.next(uniform_data).unwrap()
+        };
+
+        let layout = pipeline.descriptor_set_layout(0).unwrap();
+        Arc::new(PersistentDescriptorSet::start(layout.clone())
+            .add_buffer(uniform_buffer_subbuffer)
+            .unwrap()
+            .build()
+            .unwrap()
+        )
+    }
+}
+
 mod vs {
     vulkano_shaders::shader!{
         ty: "vertex",
@@ -412,25 +453,24 @@ mod vs {
 #version 450
 
 layout(location = 0) in vec3 position;
-//layout(location = 1) in vec3 normal;
-layout(location = 2) in vec3 position_offset;
-layout(location = 3) in float scale;
+layout(location = 1) in vec3 normal;
 
 layout(location = 0) out vec3 v_normal;
 
 
-layout(set = 0, binding = 0) uniform Data {
-    mat4 world;
+layout(set = 0, binding = 0) uniform WorldData {
     mat4 view;
     mat4 proj;
 } uniforms;
 
-void main() {
-    vec3 normal = {1.0, 1.0, 1.0};
+layout(set = 1, binding = 0) uniform ModelData {
+    mat4 model;
+} model_uniforms;
 
-    mat4 worldview = uniforms.view * uniforms.world;
+void main() {
+    mat4 worldview = uniforms.view * model_uniforms.model;
     v_normal = transpose(inverse(mat3(worldview))) * normal;
-    gl_Position = uniforms.proj * worldview * vec4(scale * position + position_offset, 1.0);
+    gl_Position = uniforms.proj * worldview * vec4(position, 1.0);
 }"
     }
 }
@@ -492,7 +532,7 @@ fn window_size_dependent_setup(
     // https://computergraphics.stackexchange.com/questions/5742/vulkan-best-way-of-updating-pipeline-viewport
     let pipeline = Arc::new(
         GraphicsPipeline::start()
-            .vertex_input(OneVertexOneInstanceDefinition::<Vertex, InstanceData>::new())
+            .vertex_input(TwoBuffersDefinition::<Vertex, Normal>::new())
             .vertex_shader(vs.main_entry_point(), ())
             .triangle_list()
             .viewports_dynamic_scissors_irrelevant(1)

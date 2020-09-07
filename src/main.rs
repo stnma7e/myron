@@ -2,7 +2,7 @@ use std::thread;
 
 use myron::entity::{EntityManager, ComponentManager};
 use myron::transform::{TransformManager};
-use myron::render::{RenderManager};
+use myron::graphics::render::{RenderManager};
 
 fn main() {
     println!("Hello, world!");
