@@ -3,5 +3,5 @@ extern crate vulkano;
 
 pub mod common;
 pub mod entity;
-pub mod transform;
 pub mod graphics;
+pub mod transform;

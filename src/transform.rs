@@ -1,16 +1,16 @@
-use crate::common::{Vec3};
-use crate::entity::{EntityId, Entity, ComponentManager};
+use crate::common::Vec3;
+use crate::entity::{ComponentManager, Entity, EntityId};
 
 pub struct TransformManager {
     entities: Vec<Entity>,
-    locations: Vec<Vec3>
+    locations: Vec<Vec3>,
 }
 
 impl TransformManager {
     pub fn new() -> TransformManager {
         TransformManager {
             entities: vec![],
-            locations: vec![]
+            locations: vec![],
         }
     }
 
@@ -25,5 +25,5 @@ impl ComponentManager for TransformManager {
         self.locations.push(Vec3::zero());
     }
 
-    fn tick(&mut self) { }
+    fn tick(&mut self) {}
 }

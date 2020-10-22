@@ -9,17 +9,17 @@ use vulkano::image::attachment::AttachmentImage;
 use vulkano::image::{ImageUsage, SwapchainImage};
 use vulkano::instance::Instance;
 use vulkano::instance::PhysicalDevice;
-use vulkano::pipeline::vertex::{TwoBuffersDefinition};
+use vulkano::memory::pool::StdMemoryPool;
+use vulkano::pipeline::vertex::TwoBuffersDefinition;
 use vulkano::pipeline::viewport::Viewport;
 use vulkano::pipeline::{GraphicsPipeline, GraphicsPipelineAbstract};
 use vulkano::swapchain;
 use vulkano::swapchain::{
-    AcquireError, ColorSpace, FullscreenExclusive, PresentMode, SurfaceTransform, Swapchain,
-    SwapchainCreationError, Surface
+    AcquireError, ColorSpace, FullscreenExclusive, PresentMode, Surface, SurfaceTransform,
+    Swapchain, SwapchainCreationError,
 };
 use vulkano::sync;
 use vulkano::sync::{FlushError, GpuFuture};
-use vulkano::memory::pool::StdMemoryPool;
 
 use vulkano_win::VkSurfaceBuild;
 use winit::event::{Event, WindowEvent};
@@ -29,7 +29,7 @@ use winit::window::{Window, WindowBuilder};
 use cgmath::{Matrix3, Matrix4, Point3, Rad, Vector3};
 
 use std::iter;
-use std::sync::{Arc};
+use std::sync::Arc;
 use std::time::Instant;
 
 use crate::graphics::teapot::{Normal, Vertex, INDICES, NORMALS, VERTICES};
@@ -62,7 +62,14 @@ pub struct Model {
     pub normal_buffer: Arc<CpuAccessibleBuffer<[Normal]>>,
     pub index_buffer: Arc<CpuAccessibleBuffer<[u16]>>,
     pub uniform_buffer: CpuBufferPool<vs::ty::ModelData>,
-    pub set: Arc<PersistentDescriptorSet<((), PersistentDescriptorSetBuf<CpuBufferPoolSubbuffer<vs::ty::ModelData, Arc<StdMemoryPool>>>)>>
+    pub set: Arc<
+        PersistentDescriptorSet<(
+            (),
+            PersistentDescriptorSetBuf<
+                CpuBufferPoolSubbuffer<vs::ty::ModelData, Arc<StdMemoryPool>>,
+            >,
+        )>,
+    >,
 }
 
 impl VulkanContext {
@@ -152,7 +159,8 @@ impl VulkanContext {
         let (pipeline, framebuffers) =
             window_size_dependent_setup(device.clone(), &vs, &fs, &images, render_pass.clone());
 
-        let uniform_buffer = CpuBufferPool::<vs::ty::WorldData>::new(device.clone(), BufferUsage::all());
+        let uniform_buffer =
+            CpuBufferPool::<vs::ty::WorldData>::new(device.clone(), BufferUsage::all());
 
         VulkanContext {
             event_loop_proxy: event_loop_proxy,
@@ -172,27 +180,41 @@ impl VulkanContext {
             distance: Point3::new(0.0, 0.0, 0.0),
 
             vs: Arc::new(vs),
-            fs: Arc::new(fs)
+            fs: Arc::new(fs),
         }
     }
 
     pub fn new_model(&self, rotation_start: Instant) -> Model {
         let vertices = VERTICES.iter().cloned();
-        let vertex_buffer =
-            CpuAccessibleBuffer::from_iter(self.device.clone(), BufferUsage::all(), false, vertices)
-                .unwrap();
+        let vertex_buffer = CpuAccessibleBuffer::from_iter(
+            self.device.clone(),
+            BufferUsage::all(),
+            false,
+            vertices,
+        )
+        .unwrap();
 
         let normals = NORMALS.iter().cloned();
         let normals_buffer =
-            CpuAccessibleBuffer::from_iter(self.device.clone(), BufferUsage::all(), false, normals).unwrap();
+            CpuAccessibleBuffer::from_iter(self.device.clone(), BufferUsage::all(), false, normals)
+                .unwrap();
 
         let indices = INDICES.iter().cloned();
         let index_buffer =
-            CpuAccessibleBuffer::from_iter(self.device.clone(), BufferUsage::all(), false, indices).unwrap();
+            CpuAccessibleBuffer::from_iter(self.device.clone(), BufferUsage::all(), false, indices)
+                .unwrap();
 
-        let uniform_buffer = CpuBufferPool::<vs::ty::ModelData>::new(self.device.clone(), BufferUsage::all());
+        let uniform_buffer =
+            CpuBufferPool::<vs::ty::ModelData>::new(self.device.clone(), BufferUsage::all());
 
-        Model::new(vertex_buffer.clone(), normals_buffer.clone(), index_buffer.clone(), uniform_buffer, rotation_start, self.pipeline.clone())
+        Model::new(
+            vertex_buffer.clone(),
+            normals_buffer.clone(),
+            index_buffer.clone(),
+            uniform_buffer,
+            rotation_start,
+            self.pipeline.clone(),
+        )
     }
 }
 
@@ -205,33 +227,58 @@ impl Model {
         rotation_start: Instant,
         pipeline: Arc<dyn GraphicsPipelineAbstract + Send + Sync>,
     ) -> Self {
-        let set = Model::create_descriptor_set(uniform_buffer.clone(), pipeline, rotation_start, Point3::new(0.0, 0.0, 0.0));
+        let set = Model::create_descriptor_set(
+            uniform_buffer.clone(),
+            pipeline,
+            rotation_start,
+            Point3::new(0.0, 0.0, 0.0),
+        );
         Model {
-            vertex_buffer:  vertex_buffer,
-            normal_buffer:  normal_buffer,
-            index_buffer:   index_buffer,
+            vertex_buffer: vertex_buffer,
+            normal_buffer: normal_buffer,
+            index_buffer: index_buffer,
             uniform_buffer: uniform_buffer,
-            set: set
+            set: set,
         }
     }
 
-    pub fn update(&mut self, pipeline: Arc<dyn GraphicsPipelineAbstract + Send + Sync>, rotation_start: Instant, index: usize) {
+    pub fn update(
+        &mut self,
+        pipeline: Arc<dyn GraphicsPipelineAbstract + Send + Sync>,
+        rotation_start: Instant,
+        index: usize,
+    ) {
         let distance = Point3::new((index as f32) * 0.5, 0.0, 0.0);
-        self.set = Model::create_descriptor_set(self.uniform_buffer.clone(), pipeline, rotation_start, distance);
+        self.set = Model::create_descriptor_set(
+            self.uniform_buffer.clone(),
+            pipeline,
+            rotation_start,
+            distance,
+        );
     }
 
-    fn create_descriptor_set(uniform_buffer: CpuBufferPool<vs::ty::ModelData>,
+    fn create_descriptor_set(
+        uniform_buffer: CpuBufferPool<vs::ty::ModelData>,
         pipeline: Arc<dyn GraphicsPipelineAbstract + Send + Sync>,
         rotation_start: Instant,
         distance: Point3<f32>,
-    ) -> Arc<PersistentDescriptorSet<((), PersistentDescriptorSetBuf<CpuBufferPoolSubbuffer<vs::ty::ModelData, Arc<StdMemoryPool>>>)>> {
+    ) -> Arc<
+        PersistentDescriptorSet<(
+            (),
+            PersistentDescriptorSetBuf<
+                CpuBufferPoolSubbuffer<vs::ty::ModelData, Arc<StdMemoryPool>>,
+            >,
+        )>,
+    > {
         let uniform_buffer_subbuffer = {
             let elapsed = rotation_start.elapsed();
-            let rotation = elapsed.as_secs() as f64 + elapsed.subsec_nanos() as f64 / 1_000_000_000.0;
+            let rotation =
+                elapsed.as_secs() as f64 + elapsed.subsec_nanos() as f64 / 1_000_000_000.0;
             let rotation = Matrix3::from_angle_y(Rad(rotation as f32));
             let scale = Matrix4::from_scale(0.005);
 
-            let translate = Matrix4::from_translation(Vector3::new(distance[0], distance[1], distance[2]));
+            let translate =
+                Matrix4::from_translation(Vector3::new(distance[0], distance[1], distance[2]));
 
             let uniform_data = vs::ty::ModelData {
                 model: (translate * Matrix4::from(rotation) * scale).into(),
@@ -241,11 +288,12 @@ impl Model {
         };
 
         let layout = pipeline.descriptor_set_layout(0).unwrap();
-        Arc::new(PersistentDescriptorSet::start(layout.clone())
-            .add_buffer(uniform_buffer_subbuffer)
-            .unwrap()
-            .build()
-            .unwrap()
+        Arc::new(
+            PersistentDescriptorSet::start(layout.clone())
+                .add_buffer(uniform_buffer_subbuffer)
+                .unwrap()
+                .build()
+                .unwrap(),
         )
     }
 }
@@ -306,7 +354,7 @@ pub fn window_size_dependent_setup(
 }
 
 pub mod vs {
-    vulkano_shaders::shader!{
+    vulkano_shaders::shader! {
         ty: "vertex",
         src: "
 #version 450
@@ -335,7 +383,7 @@ void main() {
 }
 
 pub mod fs {
-    vulkano_shaders::shader!{
+    vulkano_shaders::shader! {
         ty: "fragment",
         src: "
 #version 450

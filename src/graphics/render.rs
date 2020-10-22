@@ -1,5 +1,5 @@
 use vulkano::command_buffer::{AutoCommandBufferBuilder, DynamicState};
-use vulkano::descriptor::descriptor_set::{PersistentDescriptorSet};
+use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
 use vulkano::swapchain::{self, AcquireError, SwapchainCreationError};
 use vulkano::sync;
 use vulkano::sync::{FlushError, GpuFuture};
@@ -9,16 +9,16 @@ use winit::event_loop::{ControlFlow, EventLoop};
 
 use cgmath::{Matrix4, Point3, Rad, Vector3};
 
-use std::sync::{Arc};
+use std::sync::Arc;
 use std::time::Instant;
 
+use crate::entity::{ComponentManager, Entity};
 use crate::graphics::vulkan;
-use crate::graphics::vulkan::{VulkanContext, window_size_dependent_setup};
-use crate::entity::{Entity, ComponentManager};
+use crate::graphics::vulkan::{window_size_dependent_setup, VulkanContext};
 
 pub struct RenderManager {
     entities: Vec<Entity>,
-    context: Option<VulkanContext>
+    context: Option<VulkanContext>,
 }
 
 impl RenderManager {
@@ -35,7 +35,10 @@ impl RenderManager {
         let mut ctx = VulkanContext::new(&event_loop);
         let mut recreate_swapchain = true;
 
-        let rotation_start = vec![Instant::now(), Instant::now() - std::time::Duration::from_millis(1000)];
+        let rotation_start = vec![
+            Instant::now(),
+            Instant::now() - std::time::Duration::from_millis(1000),
+        ];
         let model = ctx.new_model(rotation_start[0]);
         let model2 = ctx.new_model(rotation_start[1]);
         let mut models = vec![model, model2];
@@ -44,10 +47,16 @@ impl RenderManager {
 
         event_loop.run(move |e, _, control_flow| {
             match e {
-                Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
+                Event::WindowEvent {
+                    event: WindowEvent::CloseRequested,
+                    ..
+                } => {
                     *control_flow = ControlFlow::Exit;
                 }
-                Event::WindowEvent { event: WindowEvent::Resized(_), .. } => {
+                Event::WindowEvent {
+                    event: WindowEvent::Resized(_),
+                    ..
+                } => {
                     recreate_swapchain = true;
                 }
                 Event::UserEvent(new_context) => {
@@ -58,21 +67,25 @@ impl RenderManager {
                     match event {
                         WindowEvent::KeyboardInput { input, .. } => {
                             match input.scancode {
-                                0x11 => { // W
+                                0x11 => {
+                                    // W
                                     ctx.distance[1] += 0.05
-                                },
-                                0x1e => { // A
+                                }
+                                0x1e => {
+                                    // A
                                     ctx.distance[0] -= 0.05
                                 }
-                                0x1f => { // S
+                                0x1f => {
+                                    // S
                                     ctx.distance[1] -= 0.05
-                                },
-                                0x20 => { // D
+                                }
+                                0x20 => {
+                                    // D
                                     ctx.distance[0] += 0.05
                                 }
                                 _ => {}
                             }
-                        },
+                        }
                         _ => {}
                     }
                 }
@@ -151,7 +164,8 @@ impl RenderManager {
                     let mut builder = AutoCommandBufferBuilder::primary_one_time_submit(
                         ctx.device.clone(),
                         ctx.queue.family(),
-                    ).unwrap();
+                    )
+                    .unwrap();
 
                     for (i, model) in models.iter_mut().enumerate() {
                         model.update(ctx.pipeline.clone(), rotation_start[i], i);
@@ -163,24 +177,21 @@ impl RenderManager {
                                 ctx.framebuffers[image_num].clone(),
                                 false,
                                 vec![[0.0, 0.0, 1.0, 1.0].into(), 1f32.into()],
-                            ).unwrap();
+                            )
+                            .unwrap();
                         for model in &models {
                             builder = builder
                                 .draw_indexed(
                                     ctx.pipeline.clone(),
                                     &DynamicState::none(),
-                                    vec![
-                                        model.vertex_buffer.clone(),
-                                        model.normal_buffer.clone(),
-                                    ],
+                                    vec![model.vertex_buffer.clone(), model.normal_buffer.clone()],
                                     model.index_buffer.clone(),
                                     (set.clone(), model.set.clone()),
                                     (),
-                                ).unwrap();
+                                )
+                                .unwrap();
                         }
-                        builder
-                            .end_render_pass()
-                            .unwrap();
+                        builder.end_render_pass().unwrap();
                     }
 
                     let command_buffer = builder.build().unwrap();
@@ -210,7 +221,6 @@ impl RenderManager {
                 }
                 _ => (),
             }
-
         });
     }
 }
@@ -220,6 +230,5 @@ impl ComponentManager for RenderManager {
         self.entities.push(entity);
     }
 
-    fn tick(&mut self) {
-    }
+    fn tick(&mut self) {}
 }

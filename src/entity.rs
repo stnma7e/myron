@@ -2,12 +2,12 @@ pub type EntityId = u64;
 
 #[derive(Clone, Copy)]
 pub struct Entity {
-    id: EntityId
+    id: EntityId,
 }
 
 pub struct EntityManager {
     entities: Vec<Entity>,
-    last_used_id: EntityId
+    last_used_id: EntityId,
 }
 
 pub trait ComponentManager {
@@ -19,7 +19,7 @@ impl EntityManager {
     pub fn new() -> EntityManager {
         EntityManager {
             entities: vec![],
-            last_used_id: 0
+            last_used_id: 0,
         }
     }
 
